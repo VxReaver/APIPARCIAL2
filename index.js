@@ -300,3 +300,22 @@ app.delete("/api/purchases/:id", ah(async (req, res) => {
   }
 }));
 
+// GET /api/purchases (join bonito)
+app.get("/api/purchases", ah(async (_req, res) => {
+  const [rows] = await pool.query(`
+    SELECT 
+      p.id, p.total, p.status, p.purchase_date,
+      u.name AS user_name,
+      pd.id AS detail_id, pd.quantity, pd.price, pd.subtotal,
+      pr.name AS product_name
+    FROM purchases p
+    JOIN users u ON u.id = p.user_id
+    LEFT JOIN purchase_details pd ON pd.purchase_id = p.id
+    LEFT JOIN products pr ON pr.id = pd.product_id
+    ORDER BY p.id DESC, detail_id ASC
+  `);
+  const data = await buildPurchasesFromRows(rows);
+  res.json(data);
+}));
+
+
