@@ -255,17 +255,7 @@ app.put("/ventas/:id", async (req, res) => {
     conn.release();
   }
 });
-// Aquí viene el nuevo bloque con verificación de base de datos
-app.listen(port, async () => {
-  const dbOk = await ping();
-  if (dbOk) {
-    console.log(` Server listening at http://localhost:${port}`);
-  } else {
-    console.log(
-      " El servidor está corriendo, pero la base de datos no respondió."
-    );
-  }
-});
+
 
 
 // DELETE /api/purchases/:id  -> devuelve stock; bloquea si COMPLETED
@@ -343,4 +333,16 @@ app.get("/api/purchases/:id", ah(async (req, res) => {
 app.use((err, _req, res, _next) => {
   console.error("Unhandled Error:", err);
   res.status(500).json({ error: "Error interno del servidor" });
+});
+
+// Aquí viene el nuevo bloque con verificación de base de datos
+app.listen(port, async () => {
+  const dbOk = await ping();
+  if (dbOk) {
+    console.log(` Server listening at http://localhost:${port}`);
+  } else {
+    console.log(
+      " El servidor está corriendo, pero la base de datos no respondió."
+    );
+  }
 });
