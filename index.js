@@ -168,6 +168,99 @@ app.post(
   })
 );
 
+
+// PUT /api/purchases/:id  -> re-calcula total, re-aplica stock; bloquea si COMPLETED
+app.put("/api/purchases/:id", ah(async (req, res) => {
+  const id = Number(req.params.id);
+  if(!id) return res.status(400).json({ message: "ID inválido" });
+
+  const conn = await pool.getConnection();
+  try{
+    await conn.beginTransaction();
+
+    const [purch] = await conn.query("SELECT * FROM purchases WHERE id = ? FOR UPDATE", [id]);
+    if(purch.length === 0) throw new Error("Compra no encontrada");
+    if(purch[0].status === "COMPLETED")
+      return res.status(409).json({ message: "Una compra COMPLETED no puede modificarse" });
+
+    // Devolver stock actual
+    const [curDet] = await conn.query("SELECT product_id, quantity FROM purchase_details WHERE purchase_id = ?", [id]);
+    for(const d of curDet){
+      await conn.query("UPDATE products SET stock = stock + ? WHERE id = ?", [d.quantity, d.product_id]);
+    }
+    // Borrar detalles actuales
+    await conn.query("DELETE FROM purchase_details WHERE purchase_id = ?", [id]);
+
+    // Preparar nuevos valores
+    const newUserId = req.body.user_id ?? purch[0].user_id;
+    const newStatus = req.body.status ?? purch[0].status;
+    const newDetails = Array.isArray(req.body.details) ? req.body.details : [];
+
+    if(newDetails.length){
+      if(newDetails.length > 5) throw new Error("No se pueden guardar más de 5 productos por compra");
+      for(const d of newDetails){
+        if(!d.product_id || !d.quantity || (!("price" in d))) throw new Error("Cada detalle requiere product_id, quantity y price");
+        if(d.quantity <= 0) throw new Error("Las cantidades deben ser > 0");
+        if(Number(d.price) < 0) throw new Error("El precio no puede ser negativo");
+      }
+     // Verificar stock para nuevos detalles
+for (const d of newDetails) {
+  const [p] = await conn.query(
+    "SELECT id, stock FROM products WHERE id = ? FOR UPDATE",
+    [d.product_id]
+  );
+
+  if (p.length === 0) {
+    throw new Error(`Producto ${d.product_id} no existe`);
+  }
+
+  if (p[0].stock < d.quantity) {
+    throw new Error(`Stock insuficiente para producto ${d.product_id}`);
+  }
+}
+
+
+    const newTotal = newDetails.length
+      ? newDetails.reduce((acc,d)=> acc + (Number(d.price) * Number(d.quantity)), 0)
+      : Number(purch[0].total);
+
+    if(newTotal > 3500) throw new Error("El total no puede superar $3500");
+
+    // Insertar nuevos detalles + descontar stock
+    for(const d of newDetails){
+      const subtotal = Number(d.price) * Number(d.quantity);
+      await conn.query(
+        "INSERT INTO purchase_details (purchase_id, product_id, quantity, price, subtotal) VALUES (?, ?, ?, ?, ?)",
+        [id, d.product_id, d.quantity, d.price, subtotal]
+      );
+      await conn.query("UPDATE products SET stock = stock - ? WHERE id = ?", [d.quantity, d.product_id]);
+    }
+
+    // Update cabecera
+    await conn.query(
+      "UPDATE purchases SET user_id = ?, total = ?, status = ? WHERE id = ?",
+      [newUserId, newTotal, newStatus, id]
+    );
+
+app.put("/ventas/:id", async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    // ...
+    await conn.commit();
+    res.json({ id, message: "Compra actualizada" });
+  } catch (e) {
+    await conn.rollback();
+    res.status(400).json({ message: e.message });
+  } finally {
+    conn.release();
+  }
+});
+
+
+
+;
+
+
 // Aquí viene el nuevo bloque con verificación de base de datos
 app.listen(port, async () => {
   const dbOk = await ping();
