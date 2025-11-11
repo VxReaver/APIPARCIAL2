@@ -255,12 +255,6 @@ app.put("/ventas/:id", async (req, res) => {
     conn.release();
   }
 });
-
-
-
-;
-
-
 // Aquí viene el nuevo bloque con verificación de base de datos
 app.listen(port, async () => {
   const dbOk = await ping();
@@ -272,3 +266,37 @@ app.listen(port, async () => {
     );
   }
 });
+
+
+// DELETE /api/purchases/:id  -> devuelve stock; bloquea si COMPLETED
+app.delete("/api/purchases/:id", ah(async (req, res) => {
+  const id = Number(req.params.id);
+  if(!id) return res.status(400).json({ message: "ID inválido" });
+
+  const conn = await pool.getConnection();
+  try{
+    await conn.beginTransaction();
+
+    const [purch] = await conn.query("SELECT status FROM purchases WHERE id = ? FOR UPDATE", [id]);
+    if(purch.length === 0) throw new Error("Compra no encontrada");
+    if(purch[0].status === "COMPLETED")
+      return res.status(409).json({ message: "No se pueden borrar compras COMPLETED" });
+
+    const [det] = await conn.query("SELECT product_id, quantity FROM purchase_details WHERE purchase_id = ?", [id]);
+    for(const d of det){
+      await conn.query("UPDATE products SET stock = stock + ? WHERE id = ?", [d.quantity, d.product_id]);
+    }
+
+    await conn.query("DELETE FROM purchase_details WHERE purchase_id = ?", [id]);
+    await conn.query("DELETE FROM purchases WHERE id = ?", [id]);
+
+    await conn.commit();
+    res.json({ id, message: "Compra eliminada" });
+  }catch(e){
+    await conn.rollback();
+    res.status(400).json({ message: e.message });
+  }finally{
+    conn.release();
+  }
+}));
+
