@@ -318,4 +318,29 @@ app.get("/api/purchases", ah(async (_req, res) => {
   res.json(data);
 }));
 
+// GET /api/purchases/:id (join)
+app.get("/api/purchases/:id", ah(async (req, res) => {
+  const id = Number(req.params.id);
+  const [rows] = await pool.query(`
+    SELECT 
+      p.id, p.total, p.status, p.purchase_date,
+      u.name AS user_name,
+      pd.id AS detail_id, pd.quantity, pd.price, pd.subtotal,
+      pr.name AS product_name
+    FROM purchases p
+    JOIN users u ON u.id = p.user_id
+    LEFT JOIN purchase_details pd ON pd.purchase_id = p.id
+    LEFT JOIN products pr ON pr.id = pd.product_id
+    WHERE p.id = ?
+    ORDER BY detail_id ASC
+  `, [id]);
+  if(rows.length === 0) return res.status(404).json({ message: "Compra no encontrada" });
+  const [obj] = await buildPurchasesFromRows(rows);
+  res.json(obj);
+}));
 
+// -------------------- MIDDLEWARE DE ERRORES --------------------
+app.use((err, _req, res, _next) => {
+  console.error("Unhandled Error:", err);
+  res.status(500).json({ error: "Error interno del servidor" });
+});
