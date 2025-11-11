@@ -100,6 +100,74 @@ async function buildPurchasesFromRows(rows) {
   return Array.from(map.values());
 }
 
+// POST /api/purchases  -> crea compra + descuenta stock
+app.post(
+  "/api/purchases",
+  ah(async (req, res) => {
+    const err = validatePostBody(req.body);
+    if (err) return res.status(400).json({ message: err });
+
+    const { user_id, status, details } = req.body;
+    const total = details.reduce(
+      (acc, d) => acc + Number(d.price) * Number(d.quantity),
+      0
+    );
+    if (total > 3500)
+      return res
+        .status(400)
+        .json({ message: "El total no puede superar $3500" });
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      // Verificar stock (bloqueo de fila)
+      for (const d of details) {
+        const [p] = await conn.query(
+          "SELECT id, stock FROM products WHERE id = ? FOR UPDATE",
+          [d.product_id]
+        );
+
+        if (p.length === 0) {
+          throw new Error(`Producto ${d.product_id} no existe`);
+        }
+
+        if (p[0].stock < d.quantity) {
+          throw new Error(`Stock insuficiente para producto ${d.product_id}`);
+        }
+      }
+
+      // Insert cabecera
+      const [ins] = await conn.query(
+        "INSERT INTO purchases (user_id, total, status, purchase_date) VALUES (?, ?, ?, NOW())",
+        [user_id, total, status]
+      );
+      const purchaseId = ins.insertId;
+
+      // Insert detalles + descuento stock
+      for (const d of details) {
+        const subtotal = Number(d.price) * Number(d.quantity);
+        await conn.query(
+          "INSERT INTO purchase_details (purchase_id, product_id, quantity, price, subtotal) VALUES (?, ?, ?, ?, ?)",
+          [purchaseId, d.product_id, d.quantity, d.price, subtotal]
+        );
+        await conn.query("UPDATE products SET stock = stock - ? WHERE id = ?", [
+          d.quantity,
+          d.product_id,
+        ]);
+      }
+
+      await conn.commit();
+      res.status(201).json({ id: purchaseId, message: "Compra creada" });
+    } catch (e) {
+      await conn.rollback();
+      res.status(400).json({ message: e.message });
+    } finally {
+      conn.release();
+    }
+  })
+);
+
 // Aquí viene el nuevo bloque con verificación de base de datos
 app.listen(port, async () => {
   const dbOk = await ping();
