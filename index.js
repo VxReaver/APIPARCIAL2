@@ -57,6 +57,49 @@ app.post("/usuarios", async (req, res) => {
   }
 });
 
+function validatePostBody(body) {
+  if (!body || typeof body !== "object") return "Body inválido";
+  const { user_id, status, details } = body;
+  if (!user_id || !status) return "user_id y status son obligatorios";
+  if (!Array.isArray(details) || details.length === 0)
+    return "Debe haber al menos 1 detalle";
+  if (details.length > 5)
+    return "No se pueden guardar más de 5 productos por compra";
+  for (const d of details) {
+    if (!d.product_id || !d.quantity || !("price" in d))
+      return "Cada detalle requiere product_id, quantity y price";
+    if (d.quantity <= 0) return "Las cantidades deben ser > 0";
+    if (Number(d.price) < 0) return "El precio no puede ser negativo";
+  }
+  return null;
+}
+
+async function buildPurchasesFromRows(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    if (!map.has(r.id)) {
+      map.set(r.id, {
+        id: r.id,
+        user: r.user_name,
+        total: Number(r.total),
+        status: r.status,
+        purchase_date: r.purchase_date,
+        details: [],
+      });
+    }
+    if (r.detail_id) {
+      map.get(r.id).details.push({
+        id: r.detail_id,
+        product: r.product_name,
+        quantity: r.quantity,
+        price: Number(r.price),
+        subtotal: Number(r.subtotal),
+      });
+    }
+  }
+  return Array.from(map.values());
+}
+
 // Aquí viene el nuevo bloque con verificación de base de datos
 app.listen(port, async () => {
   const dbOk = await ping();
